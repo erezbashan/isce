@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>התראת עסקים ביהודה ושומרון</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand-row">
+      <div class="brand-title">
+        <span class="brand-icon" aria-hidden="true">⚠️</span>
+        <div>
+          <h1>התראת עסקים ביו"ש</h1>
+          <p class="subtitle">זיהוי עסקים הפועלים ביהודה ושומרון</p>
+        </div>
+      </div>
+      <span class="version-pill" id="ext-version">v1.0.1</span>
+    </div>
+
+    <nav class="tabs-nav" role="tablist">
+      <button type="button" class="tab-btn active" data-tab="tab-current" role="tab" aria-selected="true">
+        אתר נוכחי
+      </button>
+      <button type="button" class="tab-btn" data-tab="tab-search" role="tab" aria-selected="false">
+        חיפוש במאגר
+      </button>
+      <button type="button" class="tab-btn" data-tab="tab-manage" role="tab" aria-selected="false">
+        סנכרון וניהול
+      </button>
+    </nav>
+  </header>
+
+  <main class="app-content">
+    <!-- TAB 1: Current Website Status -->
+    <section id="tab-current" class="tab-panel active" role="tabpanel">
+      <div id="current-site-container" class="card">
+        <div class="loading-state">בודק את האתר הנוכחי...</div>
+      </div>
+    </section>
+
+    <!-- TAB 2: Search Database -->
+    <section id="tab-search" class="tab-panel" role="tabpanel">
+      <div class="search-bar-wrap">
+        <input
+          type="search"
+          id="db-search-input"
+          class="search-input"
+          placeholder="חפש שם חברה, דומיין או יישוב (למשל: ברקן, שופרסל)..."
+          autocomplete="off"
+        >
+        <div class="search-meta" id="search-count-label"></div>
+      </div>
+      <div id="search-results-list" class="results-list"></div>
+    </section>
+
+    <!-- TAB 3: Sync & Manage -->
+    <section id="tab-manage" class="tab-panel" role="tabpanel">
+      <div class="card sync-card">
+        <div class="card-header-row">
+          <h2>סטטוס מאגר נתונים</h2>
+          <span class="sync-badge" id="sync-status-pill">מקומי</span>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-box">
+            <span class="stat-num" id="stat-companies">0</span>
+            <span class="stat-label">חברות במאגר</span>
+          </div>
+          <div class="stat-box">
+            <span class="stat-num" id="stat-domains">0</span>
+            <span class="stat-label">דומיינים במעקב</span>
+          </div>
+        </div>
+        <div class="sync-timestamps">
+          <div id="last-updated-text">עודכן לאחרונה: בודק...</div>
+          <div class="sync-note">המאגר נשמר מקומית ומתעדכן אוטומטית ברקע אחת ל-7 ימים.</div>
+        </div>
+        <button type="button" id="btn-force-sync" class="btn btn-primary full-width">
+          🔄 עדכן מאגר עכשיו מהמקורות הפומביים
+        </button>
+        <div id="sync-feedback" class="sync-feedback"></div>
+      </div>
+
+      <div class="card">
+        <h2>הוספת דומיין ידנית למאגר</h2>
+        <form id="form-add-custom" class="custom-form">
+          <input type="text" id="input-custom-domain" class="text-input" placeholder="דומיין (למשל: example.co.il)" required>
+          <input type="text" id="input-custom-name" class="text-input" placeholder="שם העסק (למשל: חברה לדוגמה)">
+          <input type="text" id="input-custom-locations" class="text-input" placeholder="מיקום (למשל: אזור תעשייה ברקן)">
+          <button type="submit" class="btn btn-secondary full-width">➕ הוסף לרשימת ההתראות</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>רשימת החרגות (אין להתריע)</h2>
+        <div id="whitelist-container" class="tag-list"></div>
+      </div>
+
+      <div class="card">
+        <h2>אתרים שנוספו ידנית / זוהו אוטומטית</h2>
+        <div id="custom-list-container" class="tag-list"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>
