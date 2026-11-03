@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "התראת עסקים ביהודה ושומרון (ISCE)",
   "short_name": "ISCE Alert",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "מתריע בעת גלישה לאתרים של עסקים וחברות הפועלים ביהודה ושומרון על בסיס מאגרים פומביים וזיהוי כתובות/סניפים.",
   "permissions": [
     "storage",
@@ -18,7 +18,7 @@
   },
   "action": {
     "default_popup": "popup/popup.html",
-    "default_title": "התראת עסקים ביהודה ושומרון (v1.0.1)",
+    "default_title": "התראת עסקים ביהודה ושומרון (v1.0.2)",
     "default_icon": {
       "16": "icons/icon-16.png",
       "48": "icons/icon-48.png",

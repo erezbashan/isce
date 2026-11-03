@@ -21,7 +21,28 @@ const INDUSTRIAL_ZONES = [
   'אזור תעשייה שילה'
 ];
 
-const ADDRESS_CONTEXT_REGEX = /(?:סניף|סניפים|הסניפים|כתובת|כתובתנו|אזור תעשייה|א\.ת\.?|מפעל|משרדים|חנות|נקודת מכירה|נקודות מכירה|אולם תצוגה|מרכז לוגיסטי|מרלו"ג|ת\.ד\.?|מיקוד|שעות פתיחה|טלפון|פקס|רחוב|שדרות|קניון|מרכז מסחרי|ניווט|waze|ווייז)/i;
+// Single-character delimiter check (fixed: no ungrouped ^ or $ alternation that matches non-delimiters)
+const SINGLE_CHAR_DELIM_REGEX = /^[\s,.;:()\-/"'?!\[\]|•–—]$/;
+
+// Explicit address/branch context tokens required within a tight window around a settlement name
+const ADDRESS_CONTEXT_REGEX = /(?:^|[\s,.;:()\-/"'])(?:סניף|סניפים|הסניפים|כתובת|כתובתנו|אזור תעשייה|א\.ת\.?|חנות|נקודת מכירה|נקודות מכירה|אולם תצוגה|מרכז לוגיסטי|מרלו"ג|ת\.ד\.?|מיקוד|שעות פתיחה|טלפון|פקס|רחוב|שדרות|קניון|מרכז מסחרי|ניווט|waze|ווייז)(?:$|[\s,.;:()\-/"'])/i;
+
+// Common false-positive phrases in central Israel (e.g., Ariel Sharon Street in Tel Aviv/Givatayim/Ramat Gan)
+const FALSE_POSITIVE_PHRASES = [
+  'אריאל שרון',
+  'דרך אריאל שרון',
+  'רחוב אריאל שרון',
+  'פארק אריאל שרון',
+  'מחלף אריאל שרון'
+];
+
+/**
+ * Checks whether asingle character (or empty string at text boundary) is a valid word delimiter.
+ */
+function isDelimiterChar(ch) {
+  if (!ch) return true;
+  return SINGLE_CHAR_DELIM_REGEX.test(ch);
+}
 
 /**
  * Strips script/style tags and HTML markup to produce plain text for backend analysis.
@@ -34,6 +55,8 @@ export function stripHtmlToText(htmlString) {
     .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#8211;|&ndash;/gi, '-')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -43,55 +66,66 @@ export function stripHtmlToText(htmlString) {
  */
 export function scanTextForSettlementBranches(text, settlementLocations = [], isDedicatedBranchPage = false) {
   if (!text || text.length < 15) return null;
-  const normalizedText = text.replace(/\s+/g, ' ');
+
+  let normalizedText = text.replace(/\s+/g, ' ');
+  for (const fp of FALSE_POSITIVE_PHRASES) {
+    normalizedText = normalizedText.replaceAll(fp, ' ');
+  }
 
   // 1. Check unambiguous industrial zones first
   for (const zone of INDUSTRIAL_ZONES) {
     const idx = normalizedText.indexOf(zone);
     if (idx !== -1) {
-      const start = Math.max(0, idx - 55);
-      const end = Math.min(normalizedText.length, idx + zone.length + 65);
-      return {
-        detectedSettlements: [zone],
-        snippet: normalizedText.slice(start, end).trim()
-      };
+      const charBefore = idx > 0 ? normalizedText[idx - 1] : '';
+      const charAfter = idx + zone.length < normalizedText.length ? normalizedText[idx + zone.length] : '';
+      if (isDelimiterChar(charBefore) && isDelimiterChar(charAfter)) {
+        const start = Math.max(0, idx - 50);
+        const end = Math.min(normalizedText.length, idx + zone.length + 60);
+        return {
+          detectedSettlements: [zone],
+          snippet: normalizedText.slice(start, end).trim()
+        };
+      }
     }
   }
 
-  // 2. Check settlement names with word boundaries and address/branch context
+  // 2. Check settlement names with strict word boundaries and address/branch context
   const matchedSettlements = new Set();
   let firstSnippet = '';
 
   for (const settlement of settlementLocations) {
-    if (!settlement || settlement.length < 3) continue;
+    if (!settlement || settlement.length < 4) continue;
     let searchPos = 0;
     while (searchPos < normalizedText.length) {
       const idx = normalizedText.indexOf(settlement, searchPos);
       if (idx === -1) break;
       searchPos = idx + settlement.length;
 
-      const charBefore = idx > 0 ? normalizedText[idx - 1] : ' ';
-      const charBefore2 = idx > 1 ? normalizedText[idx - 2] : ' ';
+      const charBefore = idx > 0 ? normalizedText[idx - 1] : '';
+      const charBefore2 = idx > 1 ? normalizedText[idx - 2] : '';
       const charAfter = idx + settlement.length < normalizedText.length
         ? normalizedText[idx + settlement.length]
-        : ' ';
+        : '';
 
-      const isWordAfter = /[\s,.;:()\-/"'?!]|$/.test(charAfter);
+      // Must end at a real word delimiter (never in the middle of a word like "העלים" or "מהמפעלים")
+      const isWordAfter = isDelimiterChar(charAfter);
+      // Must start at a real word delimiter, or after a single Hebrew location preposition (ב, ל, מ) preceded by a delimiter
       const isWordBefore =
-        /[\s,.;:()\-/"']|^/.test(charBefore) ||
-        (/[בלמהוכ]/.test(charBefore) && (/[\s,.;:()\-/"']|^/.test(charBefore2)));
+        isDelimiterChar(charBefore) ||
+        (/^[בלמ]$/.test(charBefore) && isDelimiterChar(charBefore2));
 
       if (!isWordBefore || !isWordAfter) continue;
 
-      const winStart = Math.max(0, idx - 110);
-      const winEnd = Math.min(normalizedText.length, idx + settlement.length + 110);
+      // Tight local context window (85 chars before and after)
+      const winStart = Math.max(0, idx - 85);
+      const winEnd = Math.min(normalizedText.length, idx + settlement.length + 85);
       const contextWindow = normalizedText.slice(winStart, winEnd);
 
       const hasAddressKeyword = ADDRESS_CONTEXT_REGEX.test(contextWindow);
-      const hasPhoneOrNumberOnBranchPage =
-        isDedicatedBranchPage && /(?:\d{2,3}-\d{6,7}|\d{4}|\bרח['׳]|\bסניף)/.test(contextWindow);
+      const hasPhoneOrStreetOnBranchPage =
+        isDedicatedBranchPage && /(?:\b0[23489]-\d{7}\b|\bרח['׳]|\bרחוב\s|\bסניף\s)/.test(contextWindow);
 
-      if (hasAddressKeyword || hasPhoneOrNumberOnBranchPage) {
+      if (hasAddressKeyword || hasPhoneOrStreetOnBranchPage) {
         matchedSettlements.add(settlement);
         if (!firstSnippet) {
           const snipStart = Math.max(0, idx - 45);

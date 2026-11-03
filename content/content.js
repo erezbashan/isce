@@ -8,12 +8,12 @@
 
   const HOST_ID = 'isce-warning-root-host';
   const BRANCH_LINK_TEXT_REGEX = /(?:סניפים|הסניפים שלנו|רשימת סניפים|איתור סניף|צור קשר|יצירת קשר|כתובתנו|נקודות מכירה|חנויות הרשת|איפה אנחנו|branches|stores|store-locator|contact)/i;
-  const BRANCH_URL_PATH_REGEX = /\/(?:branches|snifim|stores|store-locator|locations|contact|contact-us|about-us)(?:\/|$|\?)/i;
+  const BRANCH_URL_PATH_REGEX = /\/(?:branches|snifim|stores|store-locator|locations|contact|contact-us)(?:\/|$|\?)/i;
 
   /**
    * Renders the prominent top warning banner inside an isolated Shadow DOM using Top Layer popover="manual".
    */
-  function showWarningBanner(matchData, version = '1.0.1') {
+  function showWarningBanner(matchData, version = '1.0.2') {
     if (!document.body) return;
 
     const existing = document.getElementById(HOST_ID);

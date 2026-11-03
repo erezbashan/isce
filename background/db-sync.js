@@ -2,6 +2,7 @@
 // Client-side database storage, O(1) domain lookup, and 7-day background sync from public databases.
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+const CURRENT_HEURISTIC_SCHEMA_VERSION = 2;
 
 /**
  * Extracts normalized hostname from a URL or domain string.
@@ -142,11 +143,17 @@ export async function ensureDatabaseReady() {
     'whitelist',
     'customEntries',
     'heuristicMatches',
+    'heuristicSchemaVersion',
     'lastUpdated',
     'syncStats'
   ]);
 
-  if (stored.domainIndex && Array.isArray(stored.companies) && stored.companies.length > 0) {
+  if (
+    stored.domainIndex &&
+    Array.isArray(stored.companies) &&
+    stored.companies.length > 0 &&
+    stored.heuristicSchemaVersion === CURRENT_HEURISTIC_SCHEMA_VERSION
+  ) {
     // Check if 7 days have passed since last sync from public sources
     const now = Date.now();
     const lastUpdated = stored.lastUpdated || 0;
@@ -157,14 +164,17 @@ export async function ensureDatabaseReady() {
     return stored;
   }
 
-  // First-time initialization from seed database
+  // First-time initialization or schema upgrade: clear stale v1 heuristic false positives and reload seed locations
   const seed = await loadSeedDatabase();
-  const companies = seed.companies || [];
+  const companies = stored.companies?.length ? stored.companies : (seed.companies || []);
   const settlementLocations = seed.settlementLocations || [];
   const excludedDomains = seed.excludedMediaAndReferenceDomains || [];
   const whitelist = stored.whitelist || [];
   const customEntries = stored.customEntries || [];
-  const heuristicMatches = stored.heuristicMatches || {};
+  const heuristicMatches =
+    stored.heuristicSchemaVersion === CURRENT_HEURISTIC_SCHEMA_VERSION
+      ? (stored.heuristicMatches || {})
+      : {};
   const domainIndex = buildDomainIndex(companies, customEntries, heuristicMatches);
 
   const initialState = {
@@ -175,8 +185,9 @@ export async function ensureDatabaseReady() {
     whitelist,
     customEntries,
     heuristicMatches,
-    lastUpdated: 0, // 0 so that initial live sync runs right away in the background
-    syncStats: {
+    heuristicSchemaVersion: CURRENT_HEURISTIC_SCHEMA_VERSION,
+    lastUpdated: stored.lastUpdated || 0,
+    syncStats: stored.syncStats || {
       totalCompanies: companies.length,
       totalDomains: Object.keys(domainIndex).length,
       lastAttempt: null,

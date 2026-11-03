@@ -4,7 +4,7 @@
 let popupState = {
   activeTabId: null,
   activeTabUrl: '',
-  version: '1.0.1',
+  version: '1.0.2',
   siteCheck: null,
   searchResult: { totalMatches: 0, items: [] },
   whitelist: [],
@@ -304,7 +304,7 @@ async function loadPopupData() {
   });
 
   if (res?.ok) {
-    popupState.version = res.version || '1.0.1';
+    popupState.version = res.version || '1.0.2';
     popupState.siteCheck = res.siteCheck;
     popupState.searchResult = res.searchResult || { totalMatches: 0, items: [] };
     popupState.whitelist = res.whitelist || [];
