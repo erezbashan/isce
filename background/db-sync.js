@@ -1,8 +1,9 @@
 // background/db-sync.js
 // Client-side database storage, O(1) domain lookup, and 7-day background sync from public databases.
+// Scope: Only businesses headquartered, based, or primarily manufacturing in Yehuda & Shomron.
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-const CURRENT_HEURISTIC_SCHEMA_VERSION = 2;
+const CURRENT_DB_SCHEMA_VERSION = 3;
 
 /**
  * Extracts normalized hostname from a URL or domain string.
@@ -28,7 +29,6 @@ export function normalizeHostname(input) {
 
 /**
  * Returns candidate domains from most-specific to registrable root domain.
- * E.g., "online.shufersal.co.il" -> ["online.shufersal.co.il", "shufersal.co.il"]
  */
 export function getCandidateDomains(hostname) {
   const clean = normalizeHostname(hostname);
@@ -78,9 +78,9 @@ export function buildDomainIndex(companies = [], customEntries = [], heuristicMa
           companyId: company.id,
           nameHe: company.nameHe,
           nameEn: company.nameEn || '',
-          category: company.category || 'עסק מסחרי',
+          category: company.category || 'עסק המופעל מיהודה ושומרון',
           locations: company.locations || 'יהודה ושומרון',
-          detailsHe: company.detailsHe || 'עסק הפועל ביהודה ושומרון על פי מאגרים פומביים.',
+          detailsHe: company.detailsHe || 'עסק שהנהלתו או מפעלו המרכזי פועלים ביהודה ושומרון.',
           sources: company.sources || ['מאגר פומבי'],
           matchedDomain: domain
         };
@@ -88,7 +88,6 @@ export function buildDomainIndex(companies = [], customEntries = [], heuristicMa
     }
   }
 
-  // Merge Tier 2 cached heuristic matches (if not already in verified database)
   for (const [rawDomain, matchInfo] of Object.entries(heuristicMatches || {})) {
     const domain = normalizeHostname(rawDomain);
     if (domain && !index[domain]) {
@@ -97,19 +96,18 @@ export function buildDomainIndex(companies = [], customEntries = [], heuristicMa
         companyId: `heuristic-${domain}`,
         nameHe: matchInfo.siteTitle || domain,
         nameEn: domain,
-        category: 'זיהוי כתובת / סניף באתר',
+        category: 'זיהוי כתובת הנהלה / מפעל באתר',
         locations: (matchInfo.detectedSettlements || []).join(', ') || 'יהודה ושומרון',
         detailsHe: matchInfo.snippet
-          ? `זוהה אזכור פעילות/סניף ביהודה ושומרון בעמוד האתר: "${matchInfo.snippet}"`
-          : 'זוהתה כתובת או סניף ביהודה ושומרון בסריקת האתר.',
-        sources: ['זיהוי אוטומטי באתר (Tier 2)'],
+          ? `זוהתה כתובת הנהלה או מפעל ביהודה ושומרון בעמוד האתר: "${matchInfo.snippet}"`
+          : 'זוהתה כתובת הנהלה או מפעל ביהודה ושומרון בסריקת האתר.',
+        sources: ['זיהוי כתובת באתר (Tier 2)'],
         matchedDomain: domain,
         detectedAt: matchInfo.detectedAt
       };
     }
   }
 
-  // Merge user's manually added custom entries (highest priority)
   for (const entry of customEntries || []) {
     const domain = normalizeHostname(entry.domain);
     if (domain) {
@@ -131,8 +129,7 @@ export function buildDomainIndex(companies = [], customEntries = [], heuristicMa
 }
 
 /**
- * Ensures storage is initialized with the seed database.
- * If more than 7 days have passed since lastUpdated, triggers a non-blocking background refresh.
+ * Ensures storage is initialized with the current schema version (v3: only businesses operated from Yehuda & Shomron).
  */
 export async function ensureDatabaseReady() {
   const stored = await chrome.storage.local.get([
@@ -143,7 +140,7 @@ export async function ensureDatabaseReady() {
     'whitelist',
     'customEntries',
     'heuristicMatches',
-    'heuristicSchemaVersion',
+    'dbSchemaVersion',
     'lastUpdated',
     'syncStats'
   ]);
@@ -152,27 +149,25 @@ export async function ensureDatabaseReady() {
     stored.domainIndex &&
     Array.isArray(stored.companies) &&
     stored.companies.length > 0 &&
-    stored.heuristicSchemaVersion === CURRENT_HEURISTIC_SCHEMA_VERSION
+    stored.dbSchemaVersion === CURRENT_DB_SCHEMA_VERSION
   ) {
-    // Check if 7 days have passed since last sync from public sources
     const now = Date.now();
     const lastUpdated = stored.lastUpdated || 0;
     if (now - lastUpdated > SEVEN_DAYS_MS) {
-      // Trigger non-blocking background update
       triggerBackgroundSyncIfNeeded(false);
     }
     return stored;
   }
 
-  // First-time initialization or schema upgrade: clear stale v1 heuristic false positives and reload seed locations
+  // Load clean v3 seed database (replaces old v1/v2 nationwide branch chains like Shufersal)
   const seed = await loadSeedDatabase();
-  const companies = stored.companies?.length ? stored.companies : (seed.companies || []);
+  const companies = seed.companies || [];
   const settlementLocations = seed.settlementLocations || [];
   const excludedDomains = seed.excludedMediaAndReferenceDomains || [];
   const whitelist = stored.whitelist || [];
   const customEntries = stored.customEntries || [];
   const heuristicMatches =
-    stored.heuristicSchemaVersion === CURRENT_HEURISTIC_SCHEMA_VERSION
+    stored.dbSchemaVersion === CURRENT_DB_SCHEMA_VERSION
       ? (stored.heuristicMatches || {})
       : {};
   const domainIndex = buildDomainIndex(companies, customEntries, heuristicMatches);
@@ -185,43 +180,37 @@ export async function ensureDatabaseReady() {
     whitelist,
     customEntries,
     heuristicMatches,
-    heuristicSchemaVersion: CURRENT_HEURISTIC_SCHEMA_VERSION,
-    lastUpdated: stored.lastUpdated || 0,
-    syncStats: stored.syncStats || {
+    dbSchemaVersion: CURRENT_DB_SCHEMA_VERSION,
+    lastUpdated: 0,
+    syncStats: {
       totalCompanies: companies.length,
       totalDomains: Object.keys(domainIndex).length,
       lastAttempt: null,
-      lastStatus: 'מאגר בסיסי נטען (ממתין לסנכרון ראשוני)'
+      lastStatus: 'מאגר ממוקד נטען (עסקים הפועלים מיהודה ושומרון בלבד)'
     }
   };
 
   await chrome.storage.local.set(initialState);
-  // Trigger first client-side sync in the background without blocking
   triggerBackgroundSyncIfNeeded(false);
   return initialState;
 }
 
 /**
- * Queries Wikidata's public SPARQL endpoint for companies headquartered or operating in
- * Israeli settlements in Judea and Samaria that have an official website (P856).
+ * Queries Wikidata's public SPARQL endpoint strictly for businesses whose HEADQUARTERS (wdt:P159)
+ * is located in an Israeli settlement in Judea and Samaria (wd:Q513200).
  */
 async function fetchWikidataSettlementBusinesses() {
   const sparql = `
     SELECT DISTINCT ?item ?itemLabelHe ?itemLabelEn ?website ?locLabelHe WHERE {
+      ?item wdt:P31/wdt:P279* wd:Q4830453 .
       ?item wdt:P856 ?website .
-      {
-        ?item (wdt:P159|wdt:P276|wdt:P131) ?loc .
-        ?loc wdt:P31/wdt:P279* wd:Q513200 .
-      } UNION {
-        ?item wdt:P31/wdt:P279* wd:Q4830453 .
-        ?item (wdt:P159|wdt:P276|wdt:P131) ?loc .
-        ?loc wdt:P131* wd:Q51855 .
-      }
+      ?item wdt:P159 ?loc .
+      ?loc wdt:P31/wdt:P279* wd:Q513200 .
       OPTIONAL { ?item rdfs:label ?itemLabelHe FILTER(LANG(?itemLabelHe) = "he") }
       OPTIONAL { ?item rdfs:label ?itemLabelEn FILTER(LANG(?itemLabelEn) = "en") }
       OPTIONAL { ?loc rdfs:label ?locLabelHe FILTER(LANG(?locLabelHe) = "he") }
     }
-    LIMIT 250
+    LIMIT 150
   `;
 
   const url = `https://query.wikidata.org/sparql?format=json&query=${encodeURIComponent(sparql)}`;
@@ -255,49 +244,15 @@ async function fetchWikidataSettlementBusinesses() {
         nameHe,
         nameEn,
         domains: [domain],
-        category: 'מאגר Wikidata פומבי',
+        category: 'מטה חברה ביהודה ושומרון (Wikidata)',
         locations: locHe,
-        detailsHe: `גוף או עסק המקושר לפעילות או מיקום ב${locHe} לפי מאגר הנתונים הפתוח Wikidata.`,
+        detailsHe: `חברה שמטה ההנהלה שלה (P159) רשום ב${locHe} לפי מאגר הנתונים הפתוח Wikidata.`,
         sources: ['Wikidata SPARQL']
       });
     }
     return discovered;
   } catch {
     return [];
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-/**
- * Fetches Who Profits public company index page client-side and extracts any direct website links
- * or matches known company names.
- */
-async function fetchWhoProfitsUpdates() {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000);
-
-  try {
-    const res = await fetch('https://www.whoprofits.org/companies/find-companies', {
-      signal: controller.signal,
-      credentials: 'omit'
-    });
-    if (!res.ok) return { reachable: false, extraDomains: [] };
-    const html = await res.text();
-
-    // Extract any external commercial .co.il domains linked in company profiles
-    const domainRegex = /https?:\/\/(?:www\.)?([a-z0-9-]+\.(?:co\.il|org\.il|ac\.il))/gi;
-    const foundDomains = new Set();
-    let match;
-    while ((match = domainRegex.exec(html)) !== null) {
-      const d = normalizeHostname(match[1]);
-      if (d && !d.includes('whoprofits')) {
-        foundDomains.add(d);
-      }
-    }
-    return { reachable: true, extraDomains: Array.from(foundDomains) };
-  } catch {
-    return { reachable: false, extraDomains: [] };
   } finally {
     clearTimeout(timeout);
   }
@@ -321,13 +276,11 @@ export async function triggerBackgroundSyncIfNeeded(force = false) {
   try {
     const seed = await loadSeedDatabase();
     const stored = await chrome.storage.local.get([
-      'companies',
       'whitelist',
       'customEntries',
       'heuristicMatches'
     ]);
 
-    // Start from seed companies so updates to seed are always included
     const companyMap = new Map();
     for (const c of seed.companies || []) {
       companyMap.set(c.id, {
@@ -336,18 +289,7 @@ export async function triggerBackgroundSyncIfNeeded(force = false) {
       });
     }
 
-    // Also preserve any previously synced dynamic companies
-    for (const c of stored.companies || []) {
-      if (!companyMap.has(c.id)) {
-        companyMap.set(c.id, c);
-      }
-    }
-
-    // Fetch live updates from public databases in parallel
-    const [wikidataItems, whoProfitsResult] = await Promise.all([
-      fetchWikidataSettlementBusinesses(),
-      fetchWhoProfitsUpdates()
-    ]);
+    const wikidataItems = await fetchWikidataSettlementBusinesses();
 
     const existingDomains = new Set();
     for (const c of companyMap.values()) {
@@ -374,10 +316,8 @@ export async function triggerBackgroundSyncIfNeeded(force = false) {
     const domainIndex = buildDomainIndex(mergedCompanies, customEntries, heuristicMatches);
     const now = Date.now();
 
-    const sourcesSummary = [];
-    sourcesSummary.push('מאגר בסיס (UN OHCHR + Who Profits)');
-    if (wikidataItems.length > 0) sourcesSummary.push(`Wikidata (${wikidataItems.length})`);
-    if (whoProfitsResult.reachable) sourcesSummary.push('Who Profits Live');
+    const sourcesSummary = ['מאגר עסקים המופעלים מיו"ש'];
+    if (wikidataItems.length > 0) sourcesSummary.push(`Wikidata HQ (${wikidataItems.length})`);
 
     const syncStats = {
       totalCompanies: mergedCompanies.length,
@@ -392,6 +332,7 @@ export async function triggerBackgroundSyncIfNeeded(force = false) {
       domainIndex,
       settlementLocations: seed.settlementLocations || [],
       excludedDomains: seed.excludedMediaAndReferenceDomains || [],
+      dbSchemaVersion: CURRENT_DB_SCHEMA_VERSION,
       lastUpdated: now,
       syncStats
     });
@@ -431,7 +372,6 @@ export async function checkDomainTier1(urlOrHost) {
   const whitelistSet = new Set((state.whitelist || []).map(normalizeHostname));
   const excludedSet = new Set((state.excludedDomains || []).map(normalizeHostname));
 
-  // Check if whitelisted by user
   for (const candidate of candidates) {
     if (whitelistSet.has(candidate)) {
       return {
@@ -443,7 +383,6 @@ export async function checkDomainTier1(urlOrHost) {
     }
   }
 
-  // Check O(1) domainIndex
   const domainIndex = state.domainIndex || {};
   for (const candidate of candidates) {
     if (domainIndex[candidate]) {
@@ -456,7 +395,6 @@ export async function checkDomainTier1(urlOrHost) {
     }
   }
 
-  // Determine whether Tier 2 heuristic scan should run on this domain
   const isExcludedMediaOrRef = candidates.some((c) => excludedSet.has(c));
 
   return {

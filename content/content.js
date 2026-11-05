@@ -7,13 +7,13 @@
   window.__isceContentScriptInitialized = true;
 
   const HOST_ID = 'isce-warning-root-host';
-  const BRANCH_LINK_TEXT_REGEX = /(?:סניפים|הסניפים שלנו|רשימת סניפים|איתור סניף|צור קשר|יצירת קשר|כתובתנו|נקודות מכירה|חנויות הרשת|איפה אנחנו|branches|stores|store-locator|contact)/i;
-  const BRANCH_URL_PATH_REGEX = /\/(?:branches|snifim|stores|store-locator|locations|contact|contact-us)(?:\/|$|\?)/i;
+  const CONTACT_LINK_TEXT_REGEX = /(?:צור קשר|יצירת קשר|כתובתנו|contact)/i;
+  const CONTACT_URL_PATH_REGEX = /\/(?:contact|contact-us)(?:\/|$|\?)/i;
 
   /**
    * Renders the prominent top warning banner inside an isolated Shadow DOM using Top Layer popover="manual".
    */
-  function showWarningBanner(matchData, version = '1.0.2') {
+  function showWarningBanner(matchData, version = '1.0.3') {
     if (!document.body) return;
 
     const existing = document.getElementById(HOST_ID);
@@ -346,14 +346,14 @@
     const currentPath = window.location.pathname;
     const pageTitle = document.title || '';
     const isDedicatedBranchPage =
-      BRANCH_URL_PATH_REGEX.test(currentPath) || BRANCH_LINK_TEXT_REGEX.test(pageTitle);
+      CONTACT_URL_PATH_REGEX.test(currentPath) || CONTACT_LINK_TEXT_REGEX.test(pageTitle);
 
     let pageText = '';
     if (isDedicatedBranchPage) {
       pageText = (document.body.innerText || '').slice(0, 120000);
     } else {
       const addressContainers = document.querySelectorAll(
-        'footer, address, [class*="footer" i], [id*="footer" i], [class*="contact" i], [class*="branch" i], [class*="address" i]'
+        'footer, address, [class*="footer" i], [id*="footer" i], [class*="contact" i], [class*="address" i]'
       );
       const chunks = [];
       addressContainers.forEach((el) => {
@@ -368,7 +368,7 @@
       const links = Array.from(document.querySelectorAll('a[href]'));
 
       for (const a of links) {
-        if (candidateUrls.length >= 2) break;
+        if (candidateUrls.length >= 1) break;
         const text = (a.textContent || '').trim();
         const href = a.getAttribute('href') || '';
         if (!href || href.startsWith('#') || href.startsWith('javascript:') || href.startsWith('mailto:') || href.startsWith('tel:')) {
@@ -384,8 +384,8 @@
         if (seenUrls.has(resolvedUrl.href)) continue;
 
         if (
-          (text.length > 1 && text.length < 40 && BRANCH_LINK_TEXT_REGEX.test(text)) ||
-          BRANCH_URL_PATH_REGEX.test(resolvedUrl.pathname)
+          (text.length > 1 && text.length < 30 && CONTACT_LINK_TEXT_REGEX.test(text)) ||
+          CONTACT_URL_PATH_REGEX.test(resolvedUrl.pathname)
         ) {
           seenUrls.add(resolvedUrl.href);
           candidateUrls.push(resolvedUrl.href);

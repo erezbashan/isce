@@ -63,6 +63,7 @@ Hebrew (עברית)
 
 | Version | Date | Changes | Status |
 |---------|------|---------|--------|
+| 1.0.3 | 2026-11-05 | Scoped database and Tier 2 detector strictly to businesses headquartered, based, or primarily manufacturing in Yehuda & Shomron; excluded nationwide chains that merely have branches there (e.g., Shufersal, banks, retail chains). | Draft |
 | 1.0.2 | 2026-11-03 | Fixed Tier 2 Hebrew word-boundary regex and removed ambiguous single-word settlement names to prevent false positives (e.g. matching "עלי" inside "העלים" or "מהמפעלים"). | Draft |
 | 1.0.1 | 2026-11-02 | Separated GUI and backend analysis logic into `background/analyzer.js`. | Draft |
 | 1.0.0 | 2026-11-02 | Initial release with two-tier detection (local public database + non-blocking branch/address detection), Hebrew RTL top warning banner, and searchable popup UI. | Draft |

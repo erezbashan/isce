@@ -1,5 +1,7 @@
 // background/analyzer.js
-// Backend analysis logic for Tier 2 settlement/industrial-zone detection and database search.
+// Backend analysis logic for Tier 2 headquarters/factory location detection and database search.
+// Strictly targets businesses operated from / headquartered / manufacturing in Yehuda & Shomron
+// and ignores nationwide chains that merely have retail branches there.
 
 const INDUSTRIAL_ZONES = [
   'אזור תעשייה ברקן',
@@ -21,13 +23,30 @@ const INDUSTRIAL_ZONES = [
   'אזור תעשייה שילה'
 ];
 
-// Single-character delimiter check (fixed: no ungrouped ^ or $ alternation that matches non-delimiters)
 const SINGLE_CHAR_DELIM_REGEX = /^[\s,.;:()\-/"'?!\[\]|•–—]$/;
 
-// Explicit address/branch context tokens required within a tight window around a settlement name
-const ADDRESS_CONTEXT_REGEX = /(?:^|[\s,.;:()\-/"'])(?:סניף|סניפים|הסניפים|כתובת|כתובתנו|אזור תעשייה|א\.ת\.?|חנות|נקודת מכירה|נקודות מכירה|אולם תצוגה|מרכז לוגיסטי|מרלו"ג|ת\.ד\.?|מיקוד|שעות פתיחה|טלפון|פקס|רחוב|שדרות|קניון|מרכז מסחרי|ניווט|waze|ווייז)(?:$|[\s,.;:()\-/"'])/i;
+// Only match HQ / main company address / factory context — NOT retail branches ("סניף" / "סניפים")
+const HQ_OR_FACTORY_CONTEXT_REGEX = /(?:^|[\s,.;:()\-/"'])(?:כתובתנו|כתובת החברה|משרדי החברה|מטה החברה|הנהלת החברה|כתובת המפעל|מפעל הייצור|אזור תעשייה|א\.ת\.?|ת\.ד\.?|מיקוד)(?:$|[\s,.;:()\-/"'])/i;
 
-// Common false-positive phrases in central Israel (e.g., Ariel Sharon Street in Tel Aviv/Givatayim/Ramat Gan)
+// Indicators that a text block is a multi-branch retail list rather than a single HQ/factory address
+const MULTI_BRANCH_EXCLUSION_REGEX = /(?:רשימת סניפים|הסניפים שלנו|איתור סניף|סניפי הרשת|סניף\s)/i;
+const GREEN_LINE_CITIES = [
+  'תל אביב',
+  'חיפה',
+  'ראשון לציון',
+  'פתח תקווה',
+  'באר שבע',
+  'נתניה',
+  'הרצליה',
+  'אשדוד',
+  'רמת גן',
+  'חולון',
+  'כפר סבא',
+  'רעננה',
+  'רחובות',
+  'מודיעין'
+];
+
 const FALSE_POSITIVE_PHRASES = [
   'אריאל שרון',
   'דרך אריאל שרון',
@@ -36,9 +55,6 @@ const FALSE_POSITIVE_PHRASES = [
   'מחלף אריאל שרון'
 ];
 
-/**
- * Checks whether asingle character (or empty string at text boundary) is a valid word delimiter.
- */
 function isDelimiterChar(ch) {
   if (!ch) return true;
   return SINGLE_CHAR_DELIM_REGEX.test(ch);
@@ -62,9 +78,10 @@ export function stripHtmlToText(htmlString) {
 }
 
 /**
- * Scans plain text for settlement locations in an address/branch context.
+ * Scans plain text for headquarters or factory locations in Yehuda & Shomron,
+ * ignoring businesses that list multiple branches across Israel.
  */
-export function scanTextForSettlementBranches(text, settlementLocations = [], isDedicatedBranchPage = false) {
+export function scanTextForSettlementBranches(text, settlementLocations = []) {
   if (!text || text.length < 15) return null;
 
   let normalizedText = text.replace(/\s+/g, ' ');
@@ -72,7 +89,20 @@ export function scanTextForSettlementBranches(text, settlementLocations = [], is
     normalizedText = normalizedText.replaceAll(fp, ' ');
   }
 
-  // 1. Check unambiguous industrial zones first
+  // If the text block lists multiple Green Line cities or branch-locator headers,
+  // it is a nationwide chain with branches rather than a company operated from Yehuda & Shomron.
+  if (MULTI_BRANCH_EXCLUSION_REGEX.test(normalizedText)) {
+    return null;
+  }
+  let greenLineCityCount = 0;
+  for (const city of GREEN_LINE_CITIES) {
+    if (normalizedText.includes(city)) {
+      greenLineCityCount++;
+      if (greenLineCityCount >= 2) return null;
+    }
+  }
+
+  // 1. Check unambiguous industrial zones (with HQ/factory address context nearby)
   for (const zone of INDUSTRIAL_ZONES) {
     const idx = normalizedText.indexOf(zone);
     if (idx !== -1) {
@@ -89,7 +119,7 @@ export function scanTextForSettlementBranches(text, settlementLocations = [], is
     }
   }
 
-  // 2. Check settlement names with strict word boundaries and address/branch context
+  // 2. Check settlement names only when accompanied by explicit HQ / main company address context
   const matchedSettlements = new Set();
   let firstSnippet = '';
 
@@ -107,25 +137,21 @@ export function scanTextForSettlementBranches(text, settlementLocations = [], is
         ? normalizedText[idx + settlement.length]
         : '';
 
-      // Must end at a real word delimiter (never in the middle of a word like "העלים" or "מהמפעלים")
       const isWordAfter = isDelimiterChar(charAfter);
-      // Must start at a real word delimiter, or after a single Hebrew location preposition (ב, ל, מ) preceded by a delimiter
       const isWordBefore =
         isDelimiterChar(charBefore) ||
         (/^[בלמ]$/.test(charBefore) && isDelimiterChar(charBefore2));
 
       if (!isWordBefore || !isWordAfter) continue;
 
-      // Tight local context window (85 chars before and after)
       const winStart = Math.max(0, idx - 85);
       const winEnd = Math.min(normalizedText.length, idx + settlement.length + 85);
       const contextWindow = normalizedText.slice(winStart, winEnd);
 
-      const hasAddressKeyword = ADDRESS_CONTEXT_REGEX.test(contextWindow);
-      const hasPhoneOrStreetOnBranchPage =
-        isDedicatedBranchPage && /(?:\b0[23489]-\d{7}\b|\bרח['׳]|\bרחוב\s|\bסניף\s)/.test(contextWindow);
+      // Exclude if window mentions a branch ("סניף")
+      if (MULTI_BRANCH_EXCLUSION_REGEX.test(contextWindow)) continue;
 
-      if (hasAddressKeyword || hasPhoneOrStreetOnBranchPage) {
+      if (HQ_OR_FACTORY_CONTEXT_REGEX.test(contextWindow)) {
         matchedSettlements.add(settlement);
         if (!firstSnippet) {
           const snipStart = Math.max(0, idx - 45);
@@ -148,43 +174,38 @@ export function scanTextForSettlementBranches(text, settlementLocations = [], is
 }
 
 /**
- * Evaluates Tier 2 page text and optional internal branch/contact URLs in the backend.
+ * Evaluates Tier 2 page text and optional Contact page URLs in the backend.
  */
 export async function evaluateTier2InBackend({
   pageText = '',
-  isDedicatedBranchPage = false,
   candidateUrls = [],
   settlementLocations = []
 }) {
-  let matchResult = scanTextForSettlementBranches(
-    pageText,
-    settlementLocations,
-    isDedicatedBranchPage
-  );
+  let matchResult = scanTextForSettlementBranches(pageText, settlementLocations);
   if (matchResult) {
     return { matched: true, ...matchResult };
   }
 
-  for (const branchUrl of (candidateUrls || []).slice(0, 2)) {
-    if (!branchUrl || (!branchUrl.startsWith('http://') && !branchUrl.startsWith('https://'))) {
+  for (const contactUrl of (candidateUrls || []).slice(0, 1)) {
+    if (!contactUrl || (!contactUrl.startsWith('http://') && !contactUrl.startsWith('https://'))) {
       continue;
     }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
     try {
-      const res = await fetch(branchUrl, {
+      const res = await fetch(contactUrl, {
         signal: controller.signal,
         credentials: 'omit'
       });
       if (!res.ok) continue;
-      const html = (await res.text()).slice(0, 250000);
-      const branchText = stripHtmlToText(html);
-      const subMatch = scanTextForSettlementBranches(branchText, settlementLocations, true);
+      const html = (await res.text()).slice(0, 200000);
+      const contactText = stripHtmlToText(html);
+      const subMatch = scanTextForSettlementBranches(contactText, settlementLocations);
       if (subMatch) {
-        return { matched: true, sourceUrl: branchUrl, ...subMatch };
+        return { matched: true, sourceUrl: contactUrl, ...subMatch };
       }
     } catch {
-      // Ignore network timeouts on sub-pages
+      // Ignore network timeouts
     } finally {
       clearTimeout(timeout);
     }
